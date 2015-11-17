@@ -1,0 +1,230 @@
+---
+title: 'Capstone Final Report: Predicting Review Ratings for Yelp Automotive Reviews'
+author: "Java Starchild"
+date: "October 31, 2015"
+output:
+  pdf_document:
+    fig_caption: yes
+    fig_crop: no
+    keep_tex: yes
+  html_document:
+    fig_caption: yes
+---
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+
+if(!require(topicmodels)){
+  install.packages("topicmodels",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+require(topicmodels)
+
+
+if(!require(dplyr)){
+  install.packages("dplyr",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+require(dplyr)
+
+# if(!require(tidyr)){
+#   install.packages("tidyr",repos="http://cran.rstudio.com/", dependencies = TRUE)
+# }
+# 
+# 
+# require(tidyr)
+
+if(!require(ggplot2)){
+  install.packages("ggplot2",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(ggplot2)
+
+if(!require(R.utils)){
+  install.packages("R.utils",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(R.utils)
+
+if(!require(igraph)){
+  install.packages("igraph",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(igraph)
+
+if(!require(stringr)){
+  install.packages("stringr",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(stringr)
+
+if(!require(grid)){
+  install.packages("grid",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(grid)
+
+if(!require(segmented)){
+  install.packages("segmented",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+require(segmented)
+
+if(!require(wordcloud)){
+  install.packages("wordcloud",repos="http://cran.rstudio.com/",dependencies = TRUE)
+}
+
+
+require(wordcloud)
+
+
+
+
+source("scripts/igraph.plot2.R")
+source("scripts/graph.circular.R")
+
+load("data/df/review10K.RData")
+
+load("data/df/business.RData")
+
+
+load('data/df/automotive_ids.RData')
+
+load('results/models/automotive.reviews.unigram.RData')
+
+```
+
+# Introduction
+
+Here is a description of the question/problem and the rationale for studying it.  Customer reviews on site such as Yelp have a profound impact on the chances of success of any business. Automotive customers look for a complete and satisfactory experience regarding quality of service and often seek the opinion of patrons when they are choosing a place for their next service. Learning which topics are the most frequent among customer reviews and how they associate to a positive or negative rating can help business improve their services and have a better chance of succeeding.
+
+To achieve this goal, in this report I explore some latent topics in a corpus of Yelp reviews for Automotive Businesses.
+
+
+# Methods and Data
+
+Here I describe how I you used the data and the type of analytic methods that are used.  The data used here is part of the [Yelp Dataset Challenge](http://www.yelp.com/dataset_challenge).The dataset consists of a set of JSON files that include business information, reviews, tips (shorter reviews), user information and check-ins. Business objects list name, location, opening hours, category, average star rating, the number of reviews about the business and a series of attributes like noise level reservations policy, etc. Review objects list a star rating, the review text, the review date, and the number of votes that the review has received. 
+
+I have sampled 10K reviews to allow reasonable run time and filtered the business by category to keep only those businesses in the Automotive category (`r length(business_automotive_id)`) and reviews related to those businesses (`r length(review_automotive_id)`). The texts from Automotive reviews will form the corpus for this analysis.
+
+
+I have processed each of the reviews to build a bag of words language model. To create this model I preprocessed each document in the corpus as follows: remove non-writable characters, strip extra white spaces, lower case, remove punctuation, remove numbers, stemming and stop words removal.
+
+After that, each text was tokenized into uni-grams, and the uni-gram frequencies were counted and stored into a document-term matrix of counts. Term counts across all the corpus showed a typical normal distribution. I kept the most frequent terms that, summing all their frequencies, accounted for about 90% of the total number of words in the corpus. The resulting vocabulary has `r ncol(dtm.automotive.review.unigram)` words.
+
+# Results
+
+
+Here I describe what I found through my analysis of the data.  To discover latent themes in our corpus, I run a Latent Dirichlet Allocation algorithm (LDA) using the document-term frequencies matrix as input. To estimate the model parameters we used a Gibbs sampling with a burn-in phase of 1000 iterations and later the distribution was sampled every 100 iterations during 2000 iterations. I tested other approaches (LDA with VME parameter estimation and a Correlated Topics Model) but the topics obtained were less clear than the ones resulting from LDA with Gibbs sampling.
+
+I decided to use 20 topics by fitting a three-segment linear regression and selecting the number of topics about the middle of the second segment. This method, similar to the elbow rule, seeks to get a simple model with enough flexibility. To select the number of topics (k), I ran LDA on 20% of the documents in the corpus  (`r format(round(0.2*nrow(dtm.automotive.review.unigram)),scientific=FALSE)`) using different k values. Figure 1 shows the log-likelihood for a range of values for k.
+
+```{r,echo=FALSE, fig.width=4,fig.height=2,fig.cap="Topic model log-likelihood for a range of topic numbers. The red line is a result of fitting a three segment linear regression to the data."}
+
+data.dir <- 'results/models/topics/'
+
+files <- list.files(data.dir)
+
+ll <- rbind_all(lapply(files,function(file){
+  
+  
+  var <- load(file.path(data.dir,file))
+  
+  data.frame(ll=ll,k=k)
+  
+}))
+
+seg<- segmented(lm(ll~k,ll), ~k, c(median(ll$k),median(ll$k)+10))
+
+seg.k <- c(2,seg$psi[,2],max(ll$k))
+
+seg.points <- data.frame(k=seg.k,ll=predict(seg,data.frame(k=seg.k)))
+
+ggplot(ll,aes(x=k,y=ll))+geom_point()+geom_line(data=seg.points,color='red')+ylab("Log-likelihood")+xlab("# Topics")
+
+
+```
+
+First, I will examine the results of fitting a topics model to the whole automotive reviews corpus. Second, I’ll show the results of running the same analysis over two corpora, one for positive automotive reviews and another for negative automotive reviews.
+
+
+```{r,echo=FALSE}
+
+load('results/models/topics/review_topics_LDA_Gibbs_k_20.RData')
+
+
+
+```
+
+
+```{r overall topic model ,echo=FALSE,fig.width=8,fig.height=8,fig.cap="A topic model for Yelp automotive reviews. "}
+
+k <- 20
+n <- 4
+
+topic.names <- c(Topic.1="made",Topic.2="station",Topic.3="just",Topic.4="veri",Topic.5="make",Topic.6="pic",Topic.7="talk",Topic.8="star",Topic.9="cheap",Topic.10="import",Topic.11="anyway",Topic.12="busi",Topic.13="year",Topic.14="first",Topic.15="told",Topic.16="tri",Topic.17="auto",Topic.18="gas",Topic.19="put",Topic.20="brought")
+
+graph.circular(fit,k,n,topic.names)
+
+
+
+```
+
+
+```{r,echo=FALSE,eval=FALSE}
+
+doc.p <- data.frame(fit@gamma)
+
+review[review$review_id==fit@documents[order(doc.p[,16],decreasing =TRUE)][7],"text"]
+
+
+
+
+```
+
+
+The overall topic model lists several topics about customer experience. But good and bad experiences are mixed because the corpus includes both positive and negative reviews. I have explored the topics related to positive and negative ratings and can see (not shown) that positive reviews (stars >=3) dominate over negative reviews (stars <3).
+
+I have fitted two topic models (one for positive reviews and another for negative reviews) with 20 topics each and following the same methodology that I used to compute the overall topic model. In general we can see some of the overall topics also appear in these two new models and we get a finer grain topic distribution.
+
+```{r,echo=FALSE}
+
+load("results/models/review_topics_positive_negative.RData")
+
+```
+
+```{r,echo=FALSE,fig.width=8,fig.height=8,fig.cap="A topic model for positive Yelp restaurant reviews (stars greater than or equal 3)"}
+
+k <- 20
+n <- 4
+
+topic.names <- c(Topic.1="tire",Topic.2="custom",Topic.3="come",Topic.4="tri",Topic.5="staff",Topic.6="get",Topic.7="take",Topic.8="price",Topic.9="review",Topic.10="walk",Topic.11="town",Topic.12="guy",Topic.13="shop",Topic.14="onli",Topic.15="new",Topic.16="look",Topic.17="friend",Topic.18="got",Topic.19="oil",Topic.20="didnt")
+
+graph.circular(automotive.reviews.positive.topicmodel,k,n,topic.names)
+
+
+
+```
+
+```{r,echo=FALSE,fig.width=8,fig.height=8,fig.cap="A topic model for negative Yelp automotive reviews (stars less than 3)"}
+
+k <- 20
+n <- 4
+
+topic.names <- c(Topic.1="one",Topic.2="gas",Topic.3="station",Topic.4="pump",Topic.5="servic",Topic.6="well",Topic.7="wabt",Topic.8="get",Topic.9="call",Topic.10="park",Topic.11="pay",Topic.12="alway",Topic.13="email",Topic.14="great",Topic.15="shop",Topic.16="custom",Topic.17="lot",Topic.18="minut",Topic.19="run",Topic.20="side")
+
+graph.circular(automotive.reviews.negative.topicmodel,k,n,topic.names)
+
+
+
+```
+
+
+# Discussion
+
+Here I explain how to interpret the results of my analysis and what the implications are for the question.  I have explored some latent topics in a corpus of Yelp reviews for automotive businesses. For that, I have fitted to the corpus a topic model using LDA with Gibbs sampling. The topics found display themes related to different customer experience.
+
+I have further explored the customer experience topics by splitting the corpus in two corpora, one for positive experiences and another for negative experiences and fitting a topic model to each corpus. Many themes that appear in the overall topic model also appear in the new topic models. The new models also show a finer grain decomposition of the customer experience. The top topics found in the positive reviews can be used to improve automotive business success. 
